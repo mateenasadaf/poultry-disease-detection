@@ -1,0 +1,16 @@
+neck_angle_nose_shoulder_mid
+back_angle_shouldermid_hipmid_tail
+left_wing_angle_shoulder_elbow_wrist
+right_wing_angle_shoulder_elbow_wrist
+left_leg_angle_hip_knee_ankle
+right_leg_angle_hip_knee_ankle
+beak_to_hip_dist
+body_length_shouldermid_hipmid
+left_leg_length
+right_leg_length
+leg_length_ratio
+abs_wing_angle_diff
+abs_leg_angle_diff
+head_y_rel
+center_of_mass_x_rel
+num_valid_kpts

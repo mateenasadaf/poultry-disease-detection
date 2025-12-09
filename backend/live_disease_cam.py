@@ -1,69 +1,102 @@
-import os
-import numpy as np
 import cv2
+import numpy as np
 from ultralytics import YOLO
+from tensorflow.keras.models import load_model
 
-# Pose model
-POSE_MODEL = r"C:\Users\mateena sadaf\Desktop\poultry disease\backend\yolov8n-pose.pt"
+# -----------------------------------------
+# 1. LOAD MODELS
+# -----------------------------------------
 
-# Your dataset
-DATASET = r"C:\Users\mateena sadaf\Desktop\poultry disease\datasets\posture_dataset"
+# Load YOUR trained YOLO chicken detector
+yolo_model = YOLO(r"C:\Users\mateena sadaf\Desktop\poultry disease\backend\chicken_detector.pt")
 
-model = YOLO(POSE_MODEL)
+# FORCE YOLO TO DETECT ONLY CHICKEN (CLASS 0)
+yolo_model.overrides['classes'] = [0]
 
-X = []
-y = []
+# Load YOUR Xception disease classifier
+disease_model = load_model(r"C:\Users\mateena sadaf\Desktop\poultry disease\backend\xception_disease.h5")
 
-# Two classes
-labels = ["healthy", "sick"]
+# Load disease class names
+with open(r"C:\Users\mateena sadaf\Desktop\poultry disease\backend\disease_classes.txt", "r") as f:
+    disease_labels = [line.strip() for line in f.readlines()]
 
+# -----------------------------------------
+# 2. START WEBCAM
+# -----------------------------------------
+cap = cv2.VideoCapture(0)
 
-def normalize_keypoints(keypoints, box):
-    """Normalize keypoints relative to the bounding box."""
-    x1, y1, x2, y2 = box
-    w, h = x2 - x1, y2 - y1
+print("✔ Webcam started")
+print("✔ Running live disease detection...")
 
-    features = []
-    for (x, y) in keypoints:
-        nx = (x - x1) / w
-        ny = (y - y1) / h
-        features.extend([nx, ny])
+# -----------------------------------------
+# 3. REAL-TIME LOOP
+# -----------------------------------------
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("❌ Could not read frame")
+        break
 
-    return features
+    results = yolo_model(frame, verbose=False)[0]
 
+    # -----------------------------------------
+    # PROCESS EACH DETECTION
+    # -----------------------------------------
+    for box in results.boxes:
 
-for label_index, label_name in enumerate(labels):
-
-    folder = os.path.join(DATASET, label_name)
-
-    for filename in os.listdir(folder):
-
-        if not filename.lower().endswith((".jpg", ".png", ".jpeg")):
+        # STRICT CONFIDENCE FILTER
+        conf = float(box.conf[0])
+        if conf < 0.75:   # HIGHER = fewer false detections
             continue
 
-        img_path = os.path.join(folder, filename)
-        img = cv2.imread(img_path)
-        if img is None:
+        # CLASS FILTER — ONLY CHICKEN (class 0)
+        cls = int(box.cls[0])
+        if cls != 0:
             continue
 
-        result = model(img, verbose=False)[0]
+        # EXTRACT BOX COORDINATES
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-        # If no keypoints or no detection
-        if len(result.keypoints) == 0 or len(result.boxes) == 0:
+        # REJECT VERY SMALL OBJECTS (false positives)
+        w = x2 - x1
+        h = y2 - y1
+        if w < 80 or h < 80:
             continue
 
-        # Get bounding box
-        box = result.boxes[0].xyxy[0].cpu().numpy().astype(int)
+        # CROP CHICKEN
+        crop = frame[y1:y2, x1:x2]
+        if crop is None or crop.size == 0:
+            continue
 
-        # Get keypoints
-        kpts = result.keypoints.xy[0].cpu().numpy()
+        # -----------------------------------------
+        # PREPROCESS FOR XCEPTION MODEL
+        # -----------------------------------------
+        crop_resized = cv2.resize(crop, (299, 299))
+        crop_norm = crop_resized.astype("float32") / 255.0
+        crop_norm = np.expand_dims(crop_norm, axis=0)
 
-        features = normalize_keypoints(kpts, box)
+        # -----------------------------------------
+        # PREDICT DISEASE
+        # -----------------------------------------
+        pred = disease_model.predict(crop_norm, verbose=0)
+        idx = int(np.argmax(pred))
+        disease_name = disease_labels[idx]
+        disease_conf = float(pred[0][idx])
 
-        X.append(features)
-        y.append(label_index)
+        label = f"{disease_name} ({disease_conf:.2f})"
 
+        # DRAW RESULTS
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0,255,0), 2)
+        cv2.putText(frame, label, (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
 
-# Save everything
-np.savez("posture_features.npz", X=np.array(X), y=np.array(y))
-print("✔ Posture features extracted and saved!")
+    # DISPLAY WINDOW
+    cv2.imshow("Live Disease Detection", frame)
+
+    # QUIT WITH Q
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+print("✔ Live detection stopped")
